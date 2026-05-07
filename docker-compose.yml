@@ -1,0 +1,63 @@
+services:
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 2s
+      retries: 10
+
+  mysql:
+    image: mysql:8
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: repro
+      MYSQL_USER: repro
+      MYSQL_PASSWORD: repro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-uroot", "-proot"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  bootstrap:
+    # build the image.
+    build: .
+    image: repro-4839
+    depends_on:
+      mysql: { condition: service_healthy }
+    volumes:
+      - .:/var/www
+      - vendor:/var/www/vendor
+    working_dir: /var/www
+    # Retry until mysql is actually accepting connections (its healthcheck
+    # can pass before TCP is ready on first boot), then exit. app + horizon
+    # wait on this completing successfully.
+    command: ["sh", "-c", "until php artisan migrate --force; do sleep 2; done"]
+
+  app:
+    image: repro-4839
+    depends_on:
+      bootstrap: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      mysql: { condition: service_healthy }
+    volumes:
+      - .:/var/www
+      - vendor:/var/www/vendor
+    working_dir: /var/www
+    command: ["tail", "-f", "/dev/null"]
+
+  horizon:
+    image: repro-4839
+    depends_on:
+      bootstrap: { condition: service_completed_successfully }
+      redis: { condition: service_healthy }
+      mysql: { condition: service_healthy }
+    volumes:
+      - .:/var/www
+      - vendor:/var/www/vendor
+    working_dir: /var/www
+    command: ["php", "artisan", "horizon"]
+
+volumes:
+  vendor:

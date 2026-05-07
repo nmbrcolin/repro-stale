@@ -1,0 +1,26 @@
+node_modules
+.DS_Store
+.phpintel
+.vscode
+/.phpintel
+
+# CDK asset staging directory
+.cdk.staging
+cdk.out
+
+# local direnv file
+.envrc
+
+.idea
+.onsave
+
+# Claude Code local settings (personal, not shared)
+.claude/*.local.*
+.claude/worktrees
+.claude/scheduled_tasks.lock
+
+.env
+
+results
+storage
+vendor
