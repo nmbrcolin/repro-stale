@@ -36,17 +36,16 @@ artisan commands:
   observed non-empty, and then drained to zero, the watcher emits a verdict: exit 0 if no
   widgets have `stale_since` set, exit 1 (`BUG REPRODUCED`) if any do.
 
-`WidgetJob` is `ShouldBeUniqueUntilProcessing` with `$uniqueFor = 300` and `$tries = 5`,
-and registers a `WithoutOverlapping` middleware keyed on the widget id with a jittered
-backoff (1, 5, 15, 30s). Its `handle()` sleeps 100ms–10s to simulate work, then clears
-`stale_since` on the widget.
+`WidgetJob` is `ShouldBeUniqueUntilProcessing` with `#[Tries(5)]` and `#[UniqueFor(300)]`,
+and registers a `WithoutOverlapping` middleware keyed on the widget ID with a 30s timeout.
+Its `handle()` sleeps 100ms–10s to simulate work, then clears `stale_since` on the widget.
 
 The contract being tested is that every staled widget must eventually become un-staled.
 The job dispatched by a given `setStale + dispatch` pair may ultimately not be run - it
 may be dropped by `ShouldBeUniqueUntilProcessing` because another job is already in queue
-for that widget - but in that case the job in the queue would ultimately un-stale the 
+for that widget - but in that case the job in the queue should ultimately un-stale the 
 widget. If `stale_since` is still set on any widget after the queue has fully drained -
-with no failed jobs and no exceptions - a job was lost.
+with no failed jobs and no exceptions - a job was "lost".
 
 `run-test.sh` orchestrates this per framework version: 
 

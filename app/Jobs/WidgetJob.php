@@ -7,11 +7,15 @@ use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldBeUniqueUntilProcessing;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
+use Illuminate\Queue\Attributes\Tries;
+use Illuminate\Queue\Attributes\UniqueFor;
 use Illuminate\Queue\InteractsWithQueue;
 use Illuminate\Queue\Middleware\WithoutOverlapping;
 use Illuminate\Queue\SerializesModels;
 use Illuminate\Support\Sleep;
 
+#[Tries(5)]
+#[UniqueFor(300)]
 class WidgetJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
 {
     use Dispatchable;
@@ -19,24 +23,13 @@ class WidgetJob implements ShouldBeUniqueUntilProcessing, ShouldQueue
     use Queueable;
     use SerializesModels;
 
-    public int $uniqueFor = 300;
-
-    public int $tries = 5;
-
     public function __construct(protected Widget $widget) {}
 
     public function middleware(): array
     {
-        $backoff = array_map(
-            fn($delay) => (int) ($delay * (1 + rand(-25, 25) / 100)),
-            array_pad([1, 5, 15, 30], $this->tries ?? 5, 30),
-        );
-
-        $delay = $backoff[min($this->attempts() - 1, count($backoff) - 1)];
-
         return [
             new WithoutOverlapping($this->uniqueId())
-                ->releaseAfter($delay)
+                ->releaseAfter(30)
                 ->expireAfter(30),
         ];
     }
