@@ -1,14 +1,17 @@
 #!/usr/bin/env bash
 
-# Run the repro against laravel/framework 13.4.0 vs 13.5.0 and record
-# a verdict per case. Each case:
+# Run the repro against three cases and record a verdict per case:
 #
-#   1. composer requires the pinned framework version inside the app container
-#   2. restarts horizon so it loads the new code
-#   3. wipes database + redis, re-seed widgets
-#   4. launches $PARALLEL hammers (each $ITERATIONS dispatches)
-#   5. runs the watcher; its exit code is the case verdict
-#         0 = CLEAN, 1 = REPRODUCED
+#   1. laravel/framework 13.4.0                    (baseline; expect PASSED)
+#   2. laravel/framework 13.5.0                    (suspect;  expect FAILED)
+#   3. laravel/framework 13.5.0 + revert-pr59567   (strip the two `&& ...
+#      attempts() <= 1` guards added in PR #59567 from CallQueuedHandler;
+#      expect PASSED if the hypothesis is right)
+#
+# Each case composer-requires the pinned framework version, optionally
+# patches vendor/, restarts horizon, wipes db + redis, seeds widgets,
+# launches $PARALLEL hammers, and runs the watcher (whose exit code is
+# the case verdict: 0 = PASSED, 1 = FAILED).
 #
 # Environment variables for tuning:
 #   PARALLEL       parallel hammer workers per case                  (default 4)
@@ -29,29 +32,31 @@ DEADLINE="${DEADLINE:-15}"
 SLEEP_MIN="${SLEEP_MIN:-10}"
 SLEEP_MAX="${SLEEP_MAX:-2000}"
 
-FRAMEWORK_VERSIONS=(
-  "13.4.0"   # baseline
-  "13.5.0"   # suspect
-)
-
-SUMMARY=""
-
 echo "# Bringing up stack"
 docker compose up -d app horizon >/dev/null 2>&1
 
 test_version() {
   local version="$1"
-  local label="framework${version}"
+  local patch="${2:-}"
+  local label="framework${version}${patch:+-$patch}"
 
   echo
   echo "============================================================"
-  echo "VERSION: laravel/framework=${version}"
+  echo "VERSION: laravel/framework=${version}${patch:+ (${patch})}"
   echo "============================================================"
 
   echo "# Updating dependency to laravel/framework:$version"
   docker compose exec -T app composer require \
       "laravel/framework:$version" \
       --update-with-all-dependencies --no-interaction --no-progress >/dev/null 2>&1
+
+  if [[ "$patch" == "revert-pr59567" ]]; then
+    echo "# Reverting PR #59567 (strip attempts() <= 1 guards from CallQueuedHandler)"
+    docker compose exec -T app sed -i \
+        -e 's/ && $command->job->attempts() <= 1//' \
+        -e 's/ && $job->attempts() <= 1//' \
+        vendor/laravel/framework/src/Illuminate/Queue/CallQueuedHandler.php
+  fi
 
   echo "# Wiping database and queue"
   docker compose exec -T app php artisan migrate:fresh --force >/dev/null 2>&1
@@ -97,10 +102,10 @@ test_version() {
   esac
 
   echo "============================================================"
-  echo "framework${version} ${verdict}"
+  echo "${label} ${verdict}"
   echo "============================================================"
 }
 
-for version in "${FRAMEWORK_VERSIONS[@]}"; do
-  test_version "$version"
-done
+test_version "13.4.0"
+test_version "13.5.0"
+test_version "13.5.0" "revert-pr59567"
