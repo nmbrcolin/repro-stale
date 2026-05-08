@@ -4,14 +4,14 @@
 #
 #   1. laravel/framework 13.4.0                    (baseline; expect PASSED)
 #   2. laravel/framework 13.5.0                    (suspect;  expect FAILED)
-#   3. laravel/framework 13.5.0 + revert-pr59567   (strip the two `&& ...
-#      attempts() <= 1` guards added in PR #59567 from CallQueuedHandler;
-#      expect PASSED if the hypothesis is right)
+#   3. laravel/framework + PR #60051 (proposed fix; expect PASSED)
+#      Installed from the nmbrcolin/laravel-framework fork on branch
+#      fix-sbuup-without-overlapping-lock-leak.
 #
-# Each case composer-requires the pinned framework version, optionally
-# patches vendor/, restarts horizon, wipes db + redis, seeds widgets,
-# launches $PARALLEL hammers, and runs the watcher (whose exit code is
-# the case verdict: 0 = PASSED, 1 = FAILED).
+# Each case composer-requires the pinned framework version (or fork
+# branch), restarts horizon, wipes db + redis, seeds widgets, launches
+# $PARALLEL hammers, and runs the watcher (whose exit code is the case
+# verdict: 0 = PASSED, 1 = FAILED).
 #
 # Environment variables for tuning:
 #   PARALLEL       parallel hammer workers per case                  (default 4)
@@ -37,25 +37,34 @@ docker compose up -d app horizon >/dev/null 2>&1
 
 test_version() {
   local version="$1"
-  local patch="${2:-}"
-  local label="framework${version}${patch:+-$patch}"
+  local source="${2:-release}"
+  local label
+
+  if [[ "$source" == "fork" ]]; then
+    label="framework-pr60051"
+  else
+    label="framework${version}"
+  fi
 
   echo
   echo "============================================================"
-  echo "VERSION: laravel/framework=${version}${patch:+ (${patch})}"
+  echo "VERSION: ${label}"
   echo "============================================================"
 
-  echo "# Updating dependency to laravel/framework:$version"
-  docker compose exec -T app composer require \
-      "laravel/framework:$version" \
-      --update-with-all-dependencies --no-interaction --no-progress >/dev/null 2>&1
+  if [[ "$source" == "fork" ]]; then
+    echo "# Configuring fork repository (nmbrcolin/laravel-framework)"
+    docker compose exec -T app composer config repositories.fork vcs \
+        https://github.com/nmbrcolin/laravel-framework.git >/dev/null 2>&1
 
-  if [[ "$patch" == "revert-pr59567" ]]; then
-    echo "# Reverting PR #59567 (strip attempts() <= 1 guards from CallQueuedHandler)"
-    docker compose exec -T app sed -i \
-        -e 's/ && $command->job->attempts() <= 1//' \
-        -e 's/ && $job->attempts() <= 1//' \
-        vendor/laravel/framework/src/Illuminate/Queue/CallQueuedHandler.php
+    echo "# Installing PR #60051 (fix-sbuup-without-overlapping-lock-leak)"
+    docker compose exec -T app composer require \
+        "laravel/framework:dev-fix-sbuup-without-overlapping-lock-leak as $version" \
+        --update-with-all-dependencies --no-interaction --no-progress >/dev/null 2>&1
+  else
+    echo "# Updating dependency to laravel/framework:$version"
+    docker compose exec -T app composer require \
+        "laravel/framework:$version" \
+        --update-with-all-dependencies --no-interaction --no-progress >/dev/null 2>&1
   fi
 
   echo "# Wiping database and queue"
@@ -108,4 +117,4 @@ test_version() {
 
 test_version "13.4.0"
 test_version "13.5.0"
-test_version "13.5.0" "revert-pr59567"
+test_version "13.5.0" "fork"
